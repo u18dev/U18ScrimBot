@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { openDatabase } from './database.js';
 import { startOutbox } from './integration.js';
 
@@ -31,6 +31,12 @@ const commands=[
     .addSubcommand(s=>s.setName('lookup').setDescription('Show a scrim and evidence').addIntegerOption(scrimId)),
   new SlashCommandBuilder().setName('leaderboard').setDescription('Preseason team placement standings')
 ];
+function resultControls(id) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`scrim:confirm:${id}`).setLabel('Confirm Result').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`scrim:dispute:${id}`).setLabel('Dispute Result').setStyle(ButtonStyle.Danger)
+  );
+}
 function overview(m) {return new EmbedBuilder().setTitle(`U18 Scrim #${m.id} — ${m.status.toUpperCase()}`)
   .setDescription(`**${m.home_name}** vs **${m.away_name}**`)
   .addFields({name:'Winner',value:m.winner_team_id?(m.winner_team_id===m.home_team_id?m.home_name:m.away_name):'Not reported',inline:true},
@@ -38,7 +44,25 @@ function overview(m) {return new EmbedBuilder().setTitle(`U18 Scrim #${m.id} —
   .setFooter({text:'U18 CDL Preseason • Results count only after confirmation'});
 }
 client.on('interactionCreate',async interaction=>{
-  if(!interaction.isChatInputCommand() || !interaction.inGuild()) return;
+  if(!interaction.inGuild()) return;
+  if(interaction.isButton() && /^scrim:(confirm|dispute):[1-9][0-9]*$/.test(interaction.customId)) {
+    const [,action,idText]=interaction.customId.split(':');
+    const isAdmin=interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)||false;
+    try {
+      const match=action==='confirm'
+        ? store.confirm(interaction.guildId,Number(idText),interaction.user.id,isAdmin)
+        : store.dispute(interaction.guildId,Number(idText),interaction.user.id,isAdmin);
+      await interaction.update({embeds:[overview(match)],components:[]});
+      if (match.status==='confirmed' && process.env.RESULTS_CHANNEL_ID) {
+        const channel=await client.channels.fetch(process.env.RESULTS_CHANNEL_ID).catch(()=>null);
+        if(channel?.isTextBased()) await channel.send({embeds:[overview(match)]}).catch(console.error);
+      }
+    } catch(err) {
+      await interaction.reply({content:`⚠️ ${String(err.message).slice(0,1700)}`,ephemeral:true});
+    }
+    return;
+  }
+  if(!interaction.isChatInputCommand()) return;
   const guildId=interaction.guildId,userId=interaction.user.id;
   const isAdmin=interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)||false;
   const sub=interaction.commandName==='leaderboard' ? '' : interaction.options.getSubcommand();
@@ -85,7 +109,7 @@ client.on('interactionCreate',async interaction=>{
     if(sub==='cancel')match=store.cancel(guildId,id(),userId,isAdmin);
     if(sub==='lookup')match=store.getScrim(guildId,id());
     if(!match)throw new Error('Scrim not found.');
-    await interaction.reply({embeds:[overview(match)]});
+    await interaction.reply({embeds:[overview(match)],components:sub==='report'?[resultControls(match.id)]:[]});
     if(['confirm','resolve'].includes(sub) && match.status==='confirmed' && process.env.RESULTS_CHANNEL_ID) {
       const channel=await client.channels.fetch(process.env.RESULTS_CHANNEL_ID).catch(()=>null);
       if(channel?.isTextBased() && channel.id!==interaction.channelId) await channel.send({embeds:[overview(match)]}).catch(console.error);
