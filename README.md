@@ -7,6 +7,10 @@ An independently developed Discord bot for the **U18 CDL Pre-Season Scrims Leagu
 ## Reference and provenance
 Inspired by the feature overview of [Probler-Yt/ScrimBot](https://github.com/Probler-Yt/ScrimBot), whose public repo is a showcase only: the original source is private and has no public license. This is a **new, original implementation**, not a fork or copied code.
 
+## Team-linked visual challenge wizard (v0.3.1)
+
+Captain accounts are automatically linked to their team on Discord. The **My Team** button provides invite / join / leave / captain transfer actions. The **Challenge Team** button now opens an interactive guided selection of opponent (registered teams only), the next seven Pacific dates, time, and BO3/BO5 instead of typed team/date/format fields. See [Roster and challenge guide](docs/ROSTER-AND-CHALLENGES.md).
+
 ## Interactive Scrim Center (v0.3)
 
 **One command for the control panel:** `/scrimcenter` (server manager). Members then click **Challenge Team**, **My Matches**, and **Standings**. Challenge Team opens a Discord form; the opposing captain accepts or declines on the posted card. Use `/leaderboardpanel` (server manager) to post the refreshable league leaderboard. Read [visual center setup and limitations](docs/VISUAL-CENTER.md).

@@ -1,9 +1,11 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
-  StringSelectMenuBuilder, MessageFlags, PermissionFlagsBits
+  StringSelectMenuBuilder, UserSelectMenuBuilder, MessageFlags, PermissionFlagsBits
 } from 'discord.js';
 import { createVisualStore } from './visual-store.js';
+import { createRoster } from './roster.js';
+import { createGuidedFlow } from './guided-flow.js';
 import { resolveWritableChannel } from './channel.js';
 
 const BLUE=0x2752ae;
@@ -15,7 +17,8 @@ const button=(id,label,style,emoji)=>new ButtonBuilder().setCustomId(id).setLabe
 const startButton=new ActionRowBuilder().addComponents(
   button('u18:challenge:new','Challenge Team',ButtonStyle.Primary,'⚔️'),
   button('u18:matches','My Matches',ButtonStyle.Secondary,'📅'),
-  button('u18:board','Standings',ButtonStyle.Secondary,'🏆')
+  button('u18:board','Standings',ButtonStyle.Secondary,'🏆'),
+  button('u18:team','My Team',ButtonStyle.Secondary,'👥')
 );
 const challengeRows=id=>[new ActionRowBuilder().addComponents(
   button(`u18:challenge:accept:${id}`,'Accept',ButtonStyle.Success,'✅'),
@@ -45,6 +48,7 @@ function boardEmbed(rows) {
 }
 export function setupVisualExperience(client,store) {
   const visual=createVisualStore(store);
+  const roster=createRoster(store);
   async function sendToChannel(guildId,channelId,payload) {
     if (!channelId)return null;
     const channel=await client.channels.fetch(channelId).catch(()=>null);
@@ -84,8 +88,72 @@ export function setupVisualExperience(client,store) {
     }
     await i.showModal(m);
   }
+  const guided=createGuidedFlow(roster,visual,async(c,channelId)=>{
+    return sendToChannel(c.guild_id,process.env.CHALLENGES_CHANNEL_ID||channelId,{
+      content:`<@${c.away_captain_id}> — new scrim challenge!`,
+      allowedMentions:{users:[c.away_captain_id]},
+      embeds:[challengeEmbed(c)],components:challengeRows(c.id)
+    });
+  },refreshPanel);
+  const teamView=(t,guild)=>new EmbedBuilder().setColor(BLUE).setTitle('👥 My U18 Team')
+    .setDescription(`**${safe(t.name)}**\nCaptain: <@${t.captain_id}>\nRoster: ${roster.members(guild,t.id).map(m=>`<@${m.user_id}>`).join(', ')}`);
+  const memberControls=t=>new ActionRowBuilder().addComponents(
+    button('u18:team:invite','Invite Player',ButtonStyle.Primary,'➕').setDisabled(false),
+    button('u18:team:transfer','Transfer Captain',ButtonStyle.Secondary,'🔄'),
+    button('u18:team:leave','Leave Team',ButtonStyle.Danger,'🚪')
+  );
+  async function myTeam(i) {
+    const team=roster.mine(i.guildId,i.user.id);
+    if(!team) {await i.reply({content:'You have no team yet. Ask a registered captain to invite you, or register a new team with /team register.',...ephemeral});return;}
+    await i.reply({embeds:[teamView(team,i.guildId)],components:[memberControls(team)],...ephemeral});
+  }
+  async function rosterHandle(i) {
+    if(i.isButton()&&i.customId==='u18:team'){await myTeam(i);return true;}
+    if(i.isButton()&&i.customId==='u18:team:leave'){
+      const t=roster.leave(i.guildId,i.user.id);
+      await i.update({content:`✅ You left ${safe(t.name)}.`,embeds:[],components:[]});return true;
+    }
+    if(i.isButton()&&['u18:team:invite','u18:team:transfer'].includes(i.customId)){
+      const team=roster.mine(i.guildId,i.user.id);
+      if(!team||team.captain_id!==i.user.id)throw new Error('Only the team captain can manage invitations and captaincy.');
+      const transfer=i.customId.endsWith('transfer');
+      const selector=new UserSelectMenuBuilder().setCustomId(transfer?'u18:team:pick-transfer':'u18:team:pick-invite')
+        .setPlaceholder(transfer?'Select a member to become captain':'Choose a Discord member to invite').setMinValues(1).setMaxValues(1);
+      await i.update({content:transfer?'Select an existing teammate to receive captaincy.':'Select the Discord member to invite. They must accept to join.',
+        embeds:[],components:[new ActionRowBuilder().addComponents(selector)]});
+      return true;
+    }
+    if(i.isUserSelectMenu()&&i.customId.startsWith('u18:team:pick-')){
+      const user=i.values[0],team=roster.mine(i.guildId,i.user.id);
+      if(!team||team.captain_id!==i.user.id)throw new Error('Only the captain can perform this action.');
+      if(i.customId==='u18:team:pick-transfer'){
+        const name=roster.transfer(i.guildId,i.user.id,user);
+        await i.update({content:`✅ Captaincy of ${safe(name)} transferred to <@${user}>.`,embeds:[],components:[],allowedMentions:{parse:[]}});return true;
+      }
+      const inv=roster.invite(i.guildId,team.id,i.user.id,user);
+      await i.update({content:`✅ Sent an invitation to <@${user}> for **${safe(team.name)}**.`,embeds:[],components:[],allowedMentions:{parse:[]}});
+      const notification=await sendToChannel(i.guildId,process.env.CHALLENGES_CHANNEL_ID||i.channelId,{
+        content:`<@${user}> — you've been invited to join **${safe(team.name)}**!`,
+        allowedMentions:{users:[user]},
+        components:[new ActionRowBuilder().addComponents(
+          button(`u18:invite:accept:${inv.id}`,'Join Team',ButtonStyle.Success,'✅'),
+          button(`u18:invite:decline:${inv.id}`,'Decline',ButtonStyle.Danger,'❌')
+        )]
+      });
+      if(!notification)await i.followUp({content:'⚠️ Invite was recorded but could not be posted. Check bot channel permissions.',...ephemeral});
+      return true;
+    }
+    if(i.isButton()&&/^u18:invite:(accept|decline):\d+$/.test(i.customId)){
+      const [, , action, id]=i.customId.split(':');
+      const invite=roster.respond(i.guildId,Number(id),i.user.id,action==='accept'?'accepted':'declined');
+      await i.update({content:`Invitation ${invite.state} by <@${i.user.id}> for **${safe(invite.team_name)}**.`,components:[],allowedMentions:{parse:[]}});return true;
+    }
+    return false;
+  }
   async function handle(i) {
     if(!i.inGuild())return false;
+    if(await rosterHandle(i))return true;
+    if(await guided.handle(i))return true;
     if(i.isChatInputCommand() && i.commandName==='scrimcenter') {
       if(!isAdmin(i))throw new Error('Only server managers may publish the control center.');
       const channel=await resolveWritableChannel(client,i);
@@ -118,17 +186,6 @@ export function setupVisualExperience(client,store) {
       await i.editReply('✅ Live leaderboard published.');
       return true;
     }
-    if(i.isButton() && i.customId==='u18:challenge:new') {await modal(i);return true;}
-    if(i.isModalSubmit() && i.customId==='u18:challenge:submit') {
-      const field=id=>i.fields.getTextInputValue(id).trim();
-      const c=visual.create(i.guildId,field('home'),field('away'),field('format').toUpperCase(),field('start'),field('notes'),i.user.id,isAdmin(i));
-      await i.reply({content:`✅ Challenge #${c.id} sent to <@${c.away_captain_id}>.`,...ephemeral,allowedMentions:{parse:[]}});
-      const channelId=process.env.CHALLENGES_CHANNEL_ID||i.channelId;
-      const message=await sendToChannel(i.guildId,channelId,{content:`<@${c.away_captain_id}> — you have a new scrim challenge!`,allowedMentions:{users:[c.away_captain_id]},embeds:[challengeEmbed(c)],components:challengeRows(c.id)});
-      if(!message)await i.followUp({content:'⚠️ Challenge saved, but the announcement could not be posted. Check bot permissions and CHALLENGES_CHANNEL_ID.',...ephemeral});
-      await refreshPanel(i.guildId);
-      return true;
-    }
     if(i.isButton() && /^u18:challenge:(accept|decline):\d+$/.test(i.customId)) {
       const [, , action, id]=i.customId.split(':');
       const c=visual.respond(i.guildId,Number(id),action,i.user.id,isAdmin(i));
@@ -150,5 +207,5 @@ export function setupVisualExperience(client,store) {
     }
     return false;
   }
-  return {handle,refreshLeaderboard,refreshPanel,afterMatch,visual};
+  return {handle,refreshLeaderboard,refreshPanel,afterMatch,visual,roster};
 }

@@ -82,7 +82,9 @@ client.on('interactionCreate',async interaction=>{
     if(interaction.commandName==='team') {
       if(sub==='register') {
         const name=interaction.options.getString('name',true);
+        if(visual.roster.mine(guildId,userId))throw new Error('You already belong to a team. Leave your current team before registering another.');
         const t=store.registerTeam(guildId,name,userId);
+        visual.roster.registerCaptain(guildId,userId,t.id);
         await interaction.reply({content:`✅ **${t.name}** registered. Captain: <@${userId}>. Team ID: ${t.id}`,ephemeral:true});
       } else {
         const teams=store.listTeams(guildId);

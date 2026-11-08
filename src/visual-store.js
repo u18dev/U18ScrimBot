@@ -44,7 +44,9 @@ export function createVisualStore(store) {
         if(!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startText))throw new Error('Enter date/time as YYYY-MM-DD HH:MM (Pacific).');
         const [day,clock]=startText.split(' '),[year,month,date]=day.split('-').map(Number),[hour,minute]=clock.split(':').map(Number);
         if(new Date(Date.UTC(year,month-1,date)).toISOString().slice(0,10)!==day||hour>23||minute>59)throw new Error('Invalid date or time.');
-        if(new Date(startText.replace(' ','T')+':00-08:00').getTime()<Date.now()-3600000)throw new Error('Please choose a future date/time.');
+        const pacific=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
+        const nowPacific=`${pacific.year}-${pacific.month}-${pacific.day} ${pacific.hour}:${pacific.minute}`;
+        if(startText<nowPacific)throw new Error('Please choose a future Pacific date/time.');
         const pending=db.prepare("SELECT COUNT(*) count FROM scrim_challenges WHERE guild_id=? AND created_by=? AND status='pending'").get(guildId,userId).count;
         if(pending>=3)throw new Error('Maximum of three unanswered challenges per captain.');
         const duplicate=db.prepare("SELECT id FROM scrim_challenges WHERE guild_id=? AND home_team_id=? AND away_team_id=? AND status='pending'").get(guildId,h.id,a.id);
