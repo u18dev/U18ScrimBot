@@ -7,6 +7,10 @@ An independently developed Discord bot for the **U18 CDL Pre-Season Scrims Leagu
 ## Reference and provenance
 Inspired by the feature overview of [Probler-Yt/ScrimBot](https://github.com/Probler-Yt/ScrimBot), whose public repo is a showcase only: the original source is private and has no public license. This is a **new, original implementation**, not a fork or copied code.
 
+## Interactive Scrim Center (v0.3)
+
+**One command for the control panel:** `/scrimcenter` (server manager). Members then click **Challenge Team**, **My Matches**, and **Standings**. Challenge Team opens a Discord form; the opposing captain accepts or declines on the posted card. Use `/leaderboardpanel` (server manager) to post the refreshable league leaderboard. Read [visual center setup and limitations](docs/VISUAL-CENTER.md).
+
 ## Railway deployment
 
 See [Railway staging setup](docs/RAILWAY-SETUP.md). You **must** attach a persistent volume mounted at `/data` and configure `DATABASE_PATH=/data/u18scrim.sqlite`; deploy as a single-instance background worker. The report command now posts Confirm Result / Dispute Result buttons for captains.
