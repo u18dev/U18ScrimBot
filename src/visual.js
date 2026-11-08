@@ -4,6 +4,7 @@ import {
   StringSelectMenuBuilder, MessageFlags, PermissionFlagsBits
 } from 'discord.js';
 import { createVisualStore } from './visual-store.js';
+import { resolveWritableChannel } from './channel.js';
 
 const BLUE=0x2752ae;
 const GREEN=0x2fba83;
@@ -87,8 +88,7 @@ export function setupVisualExperience(client,store) {
     if(!i.inGuild())return false;
     if(i.isChatInputCommand() && i.commandName==='scrimcenter') {
       if(!isAdmin(i))throw new Error('Only server managers may publish the control center.');
-      const channel=i.channel;
-      if(!channel?.isTextBased())throw new Error('Use a text channel.');
+      const channel=await resolveWritableChannel(client,i);
       await i.deferReply(ephemeral);
       const old=visual.getMessage(i.guildId,'control');
       if(old?.channel_id===channel.id) {
@@ -106,13 +106,14 @@ export function setupVisualExperience(client,store) {
     }
     if(i.isChatInputCommand() && i.commandName==='leaderboardpanel') {
       if(!isAdmin(i))throw new Error('Only server managers can configure leaderboard panels.');
+      const channel=await resolveWritableChannel(client,i);
       await i.deferReply(ephemeral);
       const saved=visual.getMessage(i.guildId,'leaderboard');
       if(saved?.channel_id===i.channelId) {
-        const old=await i.channel.messages.fetch(saved.message_id).catch(()=>null);
+        const old=await channel.messages.fetch(saved.message_id).catch(()=>null);
         if(old) {await old.edit({embeds:[boardEmbed(store.standings(i.guildId))]});await i.editReply('✅ Live leaderboard refreshed.');return true;}
       }
-      const msg=await i.channel.send({embeds:[boardEmbed(store.standings(i.guildId))]});
+      const msg=await channel.send({embeds:[boardEmbed(store.standings(i.guildId))]});
       visual.putMessage(i.guildId,'leaderboard',i.channelId,msg.id);
       await i.editReply('✅ Live leaderboard published.');
       return true;
