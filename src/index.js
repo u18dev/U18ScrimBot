@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { openDatabase } from './database.js';
 import { startOutbox } from './integration.js';
+import { setupVisualExperience } from './visual.js';
 
 const {DISCORD_TOKEN,DISCORD_CLIENT_ID,DISCORD_GUILD_ID} = process.env;
 if(!DISCORD_TOKEN || !DISCORD_CLIENT_ID || !DISCORD_GUILD_ID) {
@@ -11,6 +12,7 @@ const numberEnv=(name,def)=>{const n=process.env[name] ? Number(process.env[name
 const store=openDatabase(process.env.DATABASE_PATH||'./u18scrim.sqlite',{winPoints:numberEnv('WIN_POINTS',3),lossPoints:numberEnv('LOSS_POINTS',0)});
 startOutbox(store.db,process.env.SCRIMCENTER_WEBHOOK_URL,process.env.SCRIMCENTER_WEBHOOK_SECRET);
 const client=new Client({intents:[GatewayIntentBits.Guilds]});
+const visual=setupVisualExperience(client,store);
 const teamOption = (name,description) => o=>o.setName(name).setDescription(description).setRequired(true).setMaxLength(60);
 const scrimId=o=>o.setName('id').setDescription('Scrim ID').setRequired(true).setMinValue(1);
 const commands=[
@@ -29,7 +31,9 @@ const commands=[
       .addIntegerOption(scrimId).addStringOption(o=>o.setName('winner').setDescription('Winning team name').setRequired(true)))
     .addSubcommand(s=>s.setName('cancel').setDescription('Cancel an unresolved scrim').addIntegerOption(scrimId))
     .addSubcommand(s=>s.setName('lookup').setDescription('Show a scrim and evidence').addIntegerOption(scrimId)),
-  new SlashCommandBuilder().setName('leaderboard').setDescription('Preseason team placement standings')
+  new SlashCommandBuilder().setName('leaderboard').setDescription('Preseason team placement standings'),
+  new SlashCommandBuilder().setName('scrimcenter').setDescription('Admin: publish the interactive scrim center'),
+  new SlashCommandBuilder().setName('leaderboardpanel').setDescription('Admin: publish an auto-updating leaderboard')
 ];
 function resultControls(id) {
   return new ActionRowBuilder().addComponents(
@@ -45,6 +49,13 @@ function overview(m) {return new EmbedBuilder().setTitle(`U18 Scrim #${m.id} —
 }
 client.on('interactionCreate',async interaction=>{
   if(!interaction.inGuild()) return;
+  try {if(await visual.handle(interaction))return;} catch(error) {
+    console.error('Visual interaction failed:',error);
+    const message=`⚠️ ${String(error.message).slice(0,1700)}`;
+    if(interaction.replied||interaction.deferred)await interaction.followUp({content:message,ephemeral:true}).catch(console.error);
+    else await interaction.reply({content:message,ephemeral:true}).catch(console.error);
+    return;
+  }
   if(interaction.isButton() && /^scrim:(confirm|dispute):[1-9][0-9]*$/.test(interaction.customId)) {
     const [,action,idText]=interaction.customId.split(':');
     const isAdmin=interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)||false;
@@ -53,6 +64,7 @@ client.on('interactionCreate',async interaction=>{
         ? store.confirm(interaction.guildId,Number(idText),interaction.user.id,isAdmin)
         : store.dispute(interaction.guildId,Number(idText),interaction.user.id,isAdmin);
       await interaction.update({embeds:[overview(match)],components:[]});
+      if(match.status==='confirmed')await visual.afterMatch(interaction.guildId);
       if (match.status==='confirmed' && process.env.RESULTS_CHANNEL_ID) {
         const channel=await client.channels.fetch(process.env.RESULTS_CHANNEL_ID).catch(()=>null);
         if(channel?.isTextBased()) await channel.send({embeds:[overview(match)]}).catch(console.error);
@@ -110,6 +122,7 @@ client.on('interactionCreate',async interaction=>{
     if(sub==='lookup')match=store.getScrim(guildId,id());
     if(!match)throw new Error('Scrim not found.');
     await interaction.reply({embeds:[overview(match)],components:sub==='report'?[resultControls(match.id)]:[]});
+    if(match.status==='confirmed')await visual.afterMatch(guildId);
     if(['confirm','resolve'].includes(sub) && match.status==='confirmed' && process.env.RESULTS_CHANNEL_ID) {
       const channel=await client.channels.fetch(process.env.RESULTS_CHANNEL_ID).catch(()=>null);
       if(channel?.isTextBased() && channel.id!==interaction.channelId) await channel.send({embeds:[overview(match)]}).catch(console.error);
