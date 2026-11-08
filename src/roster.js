@@ -67,6 +67,16 @@ export function createRoster(store) {
         return invite.get(guild,id);
       })();
     },
+    transfer(guild,fromUser,toUser) {
+      return db.transaction(()=>{
+        const team=my.get(guild,fromUser);
+        if(!team || team.captain_id!==fromUser)throw new Error('Only the current captain can transfer captaincy.');
+        const next=my.get(guild,toUser);
+        if(!next||next.id!==team.id||next.user_id===fromUser)throw new Error('Choose another member of your team.');
+        db.prepare('UPDATE teams SET captain_id=? WHERE id=? AND guild_id=?').run(toUser,team.id,guild);
+        return team.name;
+      })();
+    },
     leave(guild,user) {
       return db.transaction(()=>{
         const team=my.get(guild,user);
