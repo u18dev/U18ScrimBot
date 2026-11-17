@@ -19,7 +19,7 @@
   - `DATABASE_PATH=/data/u18scrim.sqlite`
   - `WIN_POINTS=3` and `LOSS_POINTS=0` (provisional only)
   - Optional `RESULTS_CHANNEL_ID` = text channel ID for confirmed results
-- Leave `SCRIMCENTER_WEBHOOK_URL` and `SCRIMCENTER_WEBHOOK_SECRET` **unset** until ScrimCenter accepts and secures the webhook contract.
+- Scrim Center: set `SCRIMCENTER_API_URL`, `SCRIMCENTER_KEY_ID` and `SCRIMCENTER_KEY_SECRET` from the Scrim Center Partner Portal (see [Scrim Center integration](SCRIMCENTER-INTEGRATION.md)). Use a separate key for staging, and run `npm run outbox:clear -- --yes` before the first production connection.
 - Ensure deployment logs print `U18 ScrimBot online as ...`. If a deployment fails, examine **Deploy Logs** rather than assuming the bot is live.
 
 ## Invite the bot
@@ -33,7 +33,7 @@ In Discord Developer Portal > OAuth2 > URL Generator, select `bot` and `applicat
 5. Check `/leaderboard` for exactly one counted win.
 6. Test a second scrim's **Dispute Result** button and admin `/scrim resolve`.
 7. Redeploy once and confirm the saved results and teams remain present (volume persistence check).
-8. Only after approval, configure ScrimCenter delivery and inspect retry behavior with partner engineers.
+8. Add the Scrim Center key, confirm a scrim, approve both teams in the Partner Portal, and check `/leaderboard` shows "Official rankings from Scrim Center".
 
 ## Production hardening still required
 - Team and roster validation against U18's registration system; currently any server member can claim a team name.

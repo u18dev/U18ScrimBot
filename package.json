@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "outbox:clear": "node scripts/clear-outbox.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

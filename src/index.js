@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { openDatabase } from './database.js';
-import { startOutbox } from './integration.js';
+import { createScrimCenterClient, startOutbox } from './integration.js';
 import { setupVisualExperience } from './visual.js';
 
 const {DISCORD_TOKEN,DISCORD_CLIENT_ID,DISCORD_GUILD_ID} = process.env;
@@ -10,9 +10,18 @@ if(!DISCORD_TOKEN || !DISCORD_CLIENT_ID || !DISCORD_GUILD_ID) {
 }
 const numberEnv=(name,def)=>{const n=process.env[name] ? Number(process.env[name]):def; if(!Number.isFinite(n)||n<0)throw new Error(`Invalid ${name}`);return n;};
 const store=openDatabase(process.env.DATABASE_PATH||'./u18scrim.sqlite',{winPoints:numberEnv('WIN_POINTS',3),lossPoints:numberEnv('LOSS_POINTS',0)});
-startOutbox(store.db,process.env.SCRIMCENTER_WEBHOOK_URL,process.env.SCRIMCENTER_WEBHOOK_SECRET);
+const scrimCenter=createScrimCenterClient({apiUrl:process.env.SCRIMCENTER_API_URL,keyId:process.env.SCRIMCENTER_KEY_ID,keySecret:process.env.SCRIMCENTER_KEY_SECRET});
+startOutbox(store.db,scrimCenter);
+// Scrim Center holds U18 rankings; local standings are only a fallback when it can't be reached.
+async function leaderboardRows(guildId) {
+  const remote=await scrimCenter.standings(guildId);
+  if(remote)return {source:'scrimcenter',rows:remote.map(r=>({name:r.name,wins:r.wins,losses:r.losses,played:r.played}))};
+  return {source:'local',rows:store.standings(guildId)};
+}
+process.on('unhandledRejection',err=>console.error('Unhandled rejection:',err));
 const client=new Client({intents:[GatewayIntentBits.Guilds]});
-const visual=setupVisualExperience(client,store);
+client.on('error',err=>console.error('Discord client error:',err));
+const visual=setupVisualExperience(client,store,leaderboardRows);
 const teamOption = (name,description) => o=>o.setName(name).setDescription(description).setRequired(true).setMaxLength(60);
 const scrimId=o=>o.setName('id').setDescription('Scrim ID').setRequired(true).setMinValue(1);
 const commands=[
@@ -70,7 +79,9 @@ client.on('interactionCreate',async interaction=>{
         if(channel?.isTextBased()) await channel.send({embeds:[overview(match)]}).catch(console.error);
       }
     } catch(err) {
-      await interaction.reply({content:`⚠️ ${String(err.message).slice(0,1700)}`,ephemeral:true});
+      const content=`⚠️ ${String(err.message).slice(0,1700)}`;
+      if(interaction.replied||interaction.deferred)await interaction.followUp({content,ephemeral:true}).catch(console.error);
+      else await interaction.reply({content,ephemeral:true}).catch(console.error);
     }
     return;
   }
@@ -88,15 +99,13 @@ client.on('interactionCreate',async interaction=>{
         await interaction.reply({content:`✅ **${t.name}** registered. Captain: <@${userId}>. Team ID: ${t.id}`,ephemeral:true});
       } else {
         const teams=store.listTeams(guildId);
-        await interaction.reply({content:teams.length?teams.map(t=>`**#${t.id}** ${t.name} — <@${t.captain_id}>`).join('\n').slice(0,1900):'No teams registered yet.'});
+        await interaction.reply({content:teams.length?teams.map(t=>`**#${t.id}** ${t.name.replace(/[*_`~|@]/g,'')} — <@${t.captain_id}>`).join('\n').slice(0,1900):'No teams registered yet.',allowedMentions:{parse:[]}});
       }
       return;
     }
     if(interaction.commandName==='leaderboard') {
-      const rows=store.standings(guildId).slice(0,20);
-      await interaction.reply({embeds:[new EmbedBuilder().setTitle('🏆 U18 Preseason Scrims Leaderboard')
-        .setDescription(rows.length?rows.map((r,i)=>`**${i+1}. ${r.name}** — ${r.points} pts | ${r.wins}W-${r.losses}L`).join('\n'):'No registered teams yet.')
-        .setFooter({text:`Win: ${numberEnv('WIN_POINTS',3)} pts • Loss: ${numberEnv('LOSS_POINTS',0)} pts • Provisional scoring`})]});
+      await interaction.deferReply();
+      await interaction.editReply({embeds:[visual.boardEmbed(await leaderboardRows(guildId))]});
       return;
     }
     if(interaction.commandName!=='scrim')return;

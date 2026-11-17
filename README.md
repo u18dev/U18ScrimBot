@@ -50,7 +50,7 @@ See [Railway staging setup](docs/RAILWAY-SETUP.md). You **must** attach a persis
 - One unresolved match per team prevents duplicate/overlapping active scrims.
 - Registrations currently rely on a Discord identity; no external U18 CDL identity verification, guardian consent, or roster sync yet.
 - All records are in local SQLite; provide persistent storage/backups in deployment. Do not deploy SQLite onto ephemeral storage.
-- ScrimCenter delivery is **not enabled** unless you configure its endpoint/secret. Events are saved in an outbox even without connection.
+- Scrim Center holds the official U18 rankings. Results are sent through a signed outbox once `SCRIMCENTER_*` variables are set; `/leaderboard` reads rankings back from Scrim Center (win/loss) and falls back to local results if it is unreachable.
 - Future phases: team invitations/verification, match scheduling, maps/modes, seasonal resets, role rewards, audit trail, staff dashboard, full ScrimCenter bidirectional reconciliation.
 
 See [the proposed integration contract](docs/SCRIMCENTER-INTEGRATION.md).
