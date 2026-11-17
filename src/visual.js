@@ -41,12 +41,13 @@ const challengeEmbed=c=>new EmbedBuilder().setColor(c.status==='accepted'?GREEN:
     {name:'Opposing captain',value:`<@${c.away_captain_id}>`,inline:true},
     {name:'Notes',value:safe(c.notes)||'No additional notes'})
   .setFooter({text:c.scrim_id?`Scrim #${c.scrim_id} created • use /scrim report after the match`:'Only the opposing captain or staff may accept / decline'});
-function boardEmbed(rows) {
-  return new EmbedBuilder().setColor(GREEN).setTitle('🏆 U18 CDL • PRESEASON LEADERBOARD')
-    .setDescription(rows.length?rows.slice(0,20).map((r,i)=>`**${i+1}. ${safe(r.name)}** — ${r.points} pts | ${r.wins}W–${r.losses}L`).join('\n'):'No teams registered yet.')
-    .setFooter({text:'Confirmed scrims only • Provisional placement points'});
+function boardEmbed({source,rows}) {
+  const fromScrimCenter=source==='scrimcenter';
+  return new EmbedBuilder().setColor(GREEN).setTitle('🏆 U18 SCRIMS • RANKINGS')
+    .setDescription(rows.length?rows.slice(0,20).map((r,i)=>`**${i+1}. ${safe(r.name)}** — ${r.wins}W–${r.losses}L`).join('\n'):(fromScrimCenter?'No approved teams with confirmed scrims yet.':'No teams registered yet.'))
+    .setFooter({text:fromScrimCenter?'Official rankings from Scrim Center • Confirmed scrims • New teams appear after approval':'Scrim Center unavailable • Showing local results'});
 }
-export function setupVisualExperience(client,store) {
+export function setupVisualExperience(client,store,leaderboardRows) {
   const visual=createVisualStore(store);
   const roster=createRoster(store);
   async function sendToChannel(guildId,channelId,payload) {
@@ -60,7 +61,7 @@ export function setupVisualExperience(client,store) {
     if(!saved)return;
     const channel=await client.channels.fetch(saved.channel_id).catch(()=>null);
     const message=await channel?.messages?.fetch(saved.message_id).catch(()=>null);
-    if(message) await message.edit({embeds:[boardEmbed(store.standings(guildId))]}).catch(console.error);
+    if(message) await message.edit({embeds:[boardEmbed(await leaderboardRows(guildId))]}).catch(console.error);
   }
   async function refreshPanel(guildId) {
     const saved=visual.getMessage(guildId,'control');
@@ -69,7 +70,11 @@ export function setupVisualExperience(client,store) {
     const message=await channel?.messages?.fetch(saved.message_id).catch(()=>null);
     if(message)await message.edit({embeds:[panelEmbed(visual.activeCount(guildId))],components:[startButton]}).catch(console.error);
   }
-  async function afterMatch(guildId) {await refreshLeaderboard(guildId);}
+  async function afterMatch(guildId) {
+    await refreshLeaderboard(guildId);
+    // Scrim Center only counts the result once the outbox delivers it, and standings are cached for 60s.
+    setTimeout(()=>refreshLeaderboard(guildId).catch(console.error),75_000).unref?.();
+  }
   async function modal(i) {
     const fields=[
       ['home','Your registered team','Enter your exact team name',true],
@@ -156,8 +161,8 @@ export function setupVisualExperience(client,store) {
     if(await guided.handle(i))return true;
     if(i.isChatInputCommand() && i.commandName==='scrimcenter') {
       if(!isAdmin(i))throw new Error('Only server managers may publish the control center.');
-      const channel=await resolveWritableChannel(client,i);
       await i.deferReply(ephemeral);
+      const channel=await resolveWritableChannel(client,i);
       const old=visual.getMessage(i.guildId,'control');
       if(old?.channel_id===channel.id) {
         const oldMessage=await channel.messages.fetch(old.message_id).catch(()=>null);
@@ -174,14 +179,15 @@ export function setupVisualExperience(client,store) {
     }
     if(i.isChatInputCommand() && i.commandName==='leaderboardpanel') {
       if(!isAdmin(i))throw new Error('Only server managers can configure leaderboard panels.');
-      const channel=await resolveWritableChannel(client,i);
       await i.deferReply(ephemeral);
+      const channel=await resolveWritableChannel(client,i);
+      const board=boardEmbed(await leaderboardRows(i.guildId));
       const saved=visual.getMessage(i.guildId,'leaderboard');
       if(saved?.channel_id===i.channelId) {
         const old=await channel.messages.fetch(saved.message_id).catch(()=>null);
-        if(old) {await old.edit({embeds:[boardEmbed(store.standings(i.guildId))]});await i.editReply('✅ Live leaderboard refreshed.');return true;}
+        if(old) {await old.edit({embeds:[board]});await i.editReply('✅ Live leaderboard refreshed.');return true;}
       }
-      const msg=await channel.send({embeds:[boardEmbed(store.standings(i.guildId))]});
+      const msg=await channel.send({embeds:[board]});
       visual.putMessage(i.guildId,'leaderboard',i.channelId,msg.id);
       await i.editReply('✅ Live leaderboard published.');
       return true;
@@ -203,9 +209,10 @@ export function setupVisualExperience(client,store) {
       return true;
     }
     if(i.isButton() && i.customId==='u18:board') {
-      await i.reply({embeds:[boardEmbed(store.standings(i.guildId))],...ephemeral});return true;
+      await i.deferReply(ephemeral);
+      await i.editReply({embeds:[boardEmbed(await leaderboardRows(i.guildId))]});return true;
     }
     return false;
   }
-  return {handle,refreshLeaderboard,refreshPanel,afterMatch,visual,roster};
+  return {handle,refreshLeaderboard,refreshPanel,afterMatch,boardEmbed,visual,roster};
 }
